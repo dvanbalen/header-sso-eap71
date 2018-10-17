@@ -1,0 +1,117 @@
+This example allows REST calls to authenticate against an EAP 7.1+ server instance by setting a username and roles in specific HTTP headers. Note that this setup relies on having good network security, otherwise anyone on the network can successfully send a request to your application.
+
+################################################
+###### Steps followed to install locally: ######
+################################################
+
+unzip ~/jboss/eap/server/jboss-eap-7.1.0.zip
+
+./standalone.sh -c standalone-full.xml
+
+${JBOSS_HOME}/bin/jboss-cli.sh --connect
+
+patch apply ~/jboss/eap/server/jboss-eap-7.1.3-patch.zip
+
+shutdown --restart=true
+
+<ctrl+c shutdown of server>
+
+java -jar ../rhpam-installer-7.0.2.jar
+
+./standalone.sh -c standalone-full.xml
+
+cd ${source-dir}/common-integration/header-sso-eap71
+
+mvn clean install
+
+cd ${JBOSS_HOME}/bin
+
+./jboss-cli.sh --connect
+
+module add --name=com.redhat.consulting.sso --resources=${source-dir}/header-sso-eap71/target/header-sso-eap71-${version}.jar --dependencies=org.wildfly.security.elytron,org.wildfly.extension.elytron,javax.api,org.jboss.logging,org.slf4j
+
+/subsystem=elytron/custom-realm=header-realm:add(module=com.redhat.consulting.sso, class-name=com.redhat.consulting.sso.HttpHeaderRealm)
+
+/subsystem=elytron/security-domain=header-domain:add(realms=[{realm=header-realm}], default-realm=header-realm, permission-mapper=default-permission-mapper)
+
+/subsystem=elytron/service-loader-http-server-mechanism-factory=http-header-factory:add(module=com.redhat.consulting.sso)
+
+/subsystem=elytron/http-authentication-factory=http-header-mechanism:add(http-server-mechanism-factory=http-header-factory,security-domain=header-domain,mechanism-configurations=[{mechanism-name=HTTP_HEADER_MECHANISM}])
+
+/subsystem=undertow/application-security-domain=header-domain:add(http-authentication-factory=http-header-mechanism)
+
+/subsystem=undertow/application-security-domain=header-domain:write-attribute(name=override-deployment-config,value=true)
+
+/subsystem=ejb3/application-security-domain=header-domain:add(security-domain=header-domain)
+
+/subsystem=undertow/application-security-domain=header-domain:write-attribute(name=enable-jacc,value=true)
+
+/subsystem=security:write-attribute(name=initialize-jacc, value=false)
+
+/subsystem=elytron/policy=jacc:add(jacc-policy={})
+
+ 
+
+##################################################################
+# Configure kie-server.war to use custom security implementation #
+##################################################################
+
+[standalone@localhost:9990 /] undeploy kie-server.war
+
+vi jboss-eap-7.1/standalone/deployments/kie-server.war
+
+edit WEB-INF/jboss-web.xml:
+<?xml version="1.0" encoding="UTF-8"?>
+<jboss-web>
+  <security-domain>header-domain</security-domain>
+</jboss-web>
+
+edit WEB-INF/web.xml:
+
+...
+  <login-config>
+    <auth-method>HTTP_HEADER_MECHANISM</auth-method>
+    <realm-name>KIE Server</realm-name>
+  </login-config>
+...
+
+ 
+
+<ctrl+c shutdown server>
+
+touch jboss-eap-7.1/standalone/deployments/kie-server.war.dodeploy
+
+./standalone.sh -c standalone-full.xml
+ 
+
+################################################################################################################################################################
+# Simple test through kie-server REST API. Should result in user "david" being authenticated, and assigned all roles stored in standalone-full.xml for "agent" #
+################################################################################################################################################################
+
+$ curl -X GET http://localhost:8080/kie-server/services/rest/server -H 'X-PASSWORD: password' -H 'X-USERNAME: david#agent'
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<response type="SUCCESS" msg="Kie Server info">
+    <kie-server-info>
+        <capabilities>KieServer</capabilities>
+        <capabilities>BRM</capabilities>
+        <capabilities>BPM</capabilities>
+        <capabilities>CaseMgmt</capabilities>
+        <capabilities>BPM-UI</capabilities>
+        <capabilities>BRP</capabilities>
+        <capabilities>DMN</capabilities>
+        <capabilities>Swagger</capabilities>
+        <location>http://localhost:8080/kie-server/services/rest/server</location>
+        <name>default-kieserver</name>
+        <id>default-kieserver</id>
+        <version>7.7.0.Final-redhat-10</version>
+    </kie-server-info>
+</response>
+
+
+Expected server log output, with debug logging enabled:
+
+21:55:24,844 DEBUG [com.redhat.consulting.sso.undertow.HttpHeaderMechanismFactory] (default task-5) Creating new instance of com.redhat.consulting.sso.undertow.HttpHeaderAuthenticationMechanism
+21:55:24,844 DEBUG [com.redhat.consulting.sso.undertow.HttpHeaderAuthenticationMechanism] (default task-5) USER: david ROLES: admin,kie-server
+21:55:24,844 DEBUG [com.redhat.consulting.sso.elytron.HeaderSecurityRealm] (default task-5) Roles string to parse: admin,kie-server
+21:55:24,845 DEBUG [com.redhat.consulting.sso.elytron.HeaderSecurityRealm] (default task-5) Returning roles: admin,kie-server
+ 
