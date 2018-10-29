@@ -30,7 +30,7 @@ cd ${JBOSS_HOME}/bin
 
 module add --name=com.redhat.consulting.sso --resources=${source-dir}/header-sso-eap71/target/header-sso-eap71-${version}.jar --dependencies=org.wildfly.security.elytron,org.wildfly.extension.elytron,javax.api,org.jboss.logging,org.slf4j
 
-/subsystem=elytron/custom-realm=header-realm:add(module=com.redhat.consulting.sso, class-name=com.redhat.consulting.sso.HttpHeaderRealm)
+/subsystem=elytron/custom-realm=header-realm:add(module=com.redhat.consulting.sso, class-name=com.redhat.consulting.sso.elytron.HeaderSecurityRealm)
 
 /subsystem=elytron/security-domain=header-domain:add(realms=[{realm=header-realm}], default-realm=header-realm, permission-mapper=default-permission-mapper)
 
@@ -40,7 +40,7 @@ module add --name=com.redhat.consulting.sso --resources=${source-dir}/header-sso
 
 /subsystem=undertow/application-security-domain=header-domain:add(http-authentication-factory=http-header-mechanism)
 
-/subsystem=undertow/application-security-domain=header-domain:write-attribute(name=override-deployment-config,value=true)
+#/subsystem=undertow/application-security-domain=header-domain:write-attribute(name=override-deployment-config,value=true)
 
 /subsystem=ejb3/application-security-domain=header-domain:add(security-domain=header-domain)
 
@@ -49,6 +49,8 @@ module add --name=com.redhat.consulting.sso --resources=${source-dir}/header-sso
 /subsystem=security:write-attribute(name=initialize-jacc, value=false)
 
 /subsystem=elytron/policy=jacc:add(jacc-policy={})
+
+#:reload()
 
  
 
@@ -84,10 +86,11 @@ touch jboss-eap-7.1/standalone/deployments/kie-server.war.dodeploy
 ./standalone.sh -c standalone-full.xml
  
 
-################################################################################################################################################################
-# Simple test through kie-server REST API. Should result in user "david" being authenticated, and assigned all roles stored in standalone-full.xml for "agent" #
-################################################################################################################################################################
+######################################################################################################################################################################
+# Testing using the RHPAM 7 kie-server REST API. Should result in user "david" being authenticated, and assigned all roles stored in standalone-full.xml for "agent" #
+######################################################################################################################################################################
 
+# Get basic kie-server information
 $ curl -X GET http://localhost:8080/kie-server/services/rest/server -H 'X-PASSWORD: password' -H 'X-USERNAME: david#agent'
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <response type="SUCCESS" msg="Kie Server info">
@@ -107,6 +110,135 @@ $ curl -X GET http://localhost:8080/kie-server/services/rest/server -H 'X-PASSWO
     </kie-server-info>
 </response>
 
+# Create a container for, and deploy, itorders example that comes with RHPAM7 (may require building through the Business Central UI, or by other means, before this command is issued)
+$ curl -X PUT "http://localhost:8080/kie-server/services/rest/server/containers/itorders-itorders-1.0.0-SNAPSHOT" -H "X-USERNAME: david" -H "X-ROLES: admin,kie-server" -H  "accept: application/xml" -H  "content-type: application/json" -d "{ \"status\" : null, \"messages\" : [ ], \"container-id\" : \"itorders-itorders-1.0.0-SNAPSHOT\", \"release-id\" : { \"version\" : \"1.0.0-SNAPSHOT\", \"group-id\" : \"itorders\", \"artifact-id\" : \"itorders\" }, \"config-items\" : [ ] }"
+{
+  "type" : "SUCCESS",
+  "msg" : "Container itorders-itorders-1.0.0-SNAPSHOT successfully deployed with module itorders:itorders:1.0.0-SNAPSHOT.",
+  "result" : {
+    "kie-container" : {
+      "container-id" : "itorders-itorders-1.0.0-SNAPSHOT",
+      "release-id" : {
+        "group-id" : "itorders",
+        "artifact-id" : "itorders",
+        "version" : "1.0.0-SNAPSHOT"
+      },
+      "resolved-release-id" : {
+        "group-id" : "itorders",
+        "artifact-id" : "itorders",
+        "version" : "1.0.0-SNAPSHOT"
+      },
+      "status" : "STARTED",
+      "scanner" : {
+        "status" : "DISPOSED",
+        "poll-interval" : null
+      },
+      "config-items" : [ ],
+      "messages" : [ {
+        "severity" : "INFO",
+        "timestamp" : {
+  "java.util.Date" : 1539789363049
+},
+        "content" : [ "Container itorders-itorders-1.0.0-SNAPSHOT successfully created with module itorders:itorders:1.0.0-SNAPSHOT." ]
+      } ],
+      "container-alias" : null
+    }
+  }
+}
+
+# Verify that container was created successfully
+$ curl -X GET "http://localhost:8080/kie-server/services/rest/server/containers/itorders-itorders-1.0.0-SNAPSHOT" -H  "accept: application/xml" -H "X-USERNAME: david" -H "X-ROLES: admin,kie-server"
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<response type="SUCCESS" msg="Info for container itorders-itorders-1.0.0-SNAPSHOT">
+    <kie-container container-id="itorders-itorders-1.0.0-SNAPSHOT" status="STARTED">
+        <messages>
+            <content>Container itorders-itorders-1.0.0-SNAPSHOT successfully created with module itorders:itorders:1.0.0-SNAPSHOT.</content>
+            <severity>INFO</severity>
+            <timestamp>2018-10-17T11:16:03.049-04:00</timestamp>
+        </messages>
+        <release-id>
+            <artifact-id>itorders</artifact-id>
+            <group-id>itorders</group-id>
+            <version>1.0.0-SNAPSHOT</version>
+        </release-id>
+        <resolved-release-id>
+            <artifact-id>itorders</artifact-id>
+            <group-id>itorders</group-id>
+            <version>1.0.0-SNAPSHOT</version>
+        </resolved-release-id>
+        <scanner status="DISPOSED"/>
+    </kie-container>
+</response>
+
+Get process definitions in deployed container:
+$ curl -X GET "http://localhost:8080/kie-server/services/rest/server/containers/itorders-itorders-1.0.0-SNAPSHOT/processes?page=0&pageSize=10&sortOrder=true" -H  "accept: application/xml" -H "X-USERNAME: david" -H "X-ROLES: admin,kie-server"
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<process-definitions>
+    <processes>
+        <process-id>itorders.orderhardware</process-id>
+        <process-name>Order for IT hardware</process-name>
+        <process-version>1.0</process-version>
+        <package>org.jbpm.demo.itorders</package>
+        <container-id>itorders-itorders-1.0.0-SNAPSHOT</container-id>
+        <dynamic>true</dynamic>
+    </processes>
+    <processes>
+        <process-id>itorders-data.place-order</process-id>
+        <process-name>place-order</process-name>
+        <process-version>1.0</process-version>
+        <package>org.jbpm.demo.itorders</package>
+        <container-id>itorders-itorders-1.0.0-SNAPSHOT</container-id>
+        <dynamic>false</dynamic>
+    </processes>
+</process-definitions>
+
+# Start an instance of itorders-data.place-order process definition:
+curl -X POST "http://localhost:8080/kie-server/services/rest/server/containers/itorders-itorders-1.0.0-SNAPSHOT/processes/itorders.orderhardware/instances" -u "rhpamAdmin:rhpamAdmin123!" -H  "accept: application/xml" -H  "content-type: application/json" -d "{}"
+
+# Get list of process instances associated with the container, to verify that process was started:
+$ curl -XGET "http://localhost:8080/kie-server/services/rest/server/containers/itorders-itorders-1.0.0-SNAPSHOT/processes/instances?page=0&pageSize=10&sortOrder=true" -H  "accept: application/xml" -H "X-USERNAME: david" -H "X-ROLES: admin,kie-server"
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<process-instance-list>
+    <process-instance>
+        <process-instance-id>1</process-instance-id>
+        <process-id>itorders-data.place-order</process-id>
+        <process-name>place-order</process-name>
+        <process-version>1.0</process-version>
+        <process-instance-state>1</process-instance-state>
+        <container-id>itorders-itorders-1.0.0-SNAPSHOT</container-id>
+        <initiator>david</initiator>
+        <start-date>2018-10-17T13:17:33.950-04:00</start-date>
+        <process-instance-desc>Order #{CaseId}</process-instance-desc>
+        <correlation-key>1</correlation-key>
+        <parent-instance-id>-1</parent-instance-id>
+        <sla-compliance>0</sla-compliance>
+    </process-instance>
+</process-instance-list>
+
+# Get list of tasks
+$ curl -X GET "http://localhost:8080/kie-server/services/rest/server/containers/itorders-itorders-1.0.0-SNAPSHOT/processes/definitions/itorders-data.place-order/tasks/service" -H  "accept: application/xml" -H "X-USERNAME: david" -H "X-ROLES: admin,kie-server,supplier"
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<process-service-tasks>
+    <tasks/>
+</process-service-tasks>
+
+$ curl -X GET "http://localhost:8080/kie-server/services/rest/server/queries/tasks/instances?page=0&pageSize=10&sortOrder=true" -H  "accept: application/xml" -H "X-USERNAME: david" -H "X-ROLES: admin,kie-server"
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<task-summary-list/>
+
+
+
+############################################
+# Enabling DEBUG logging for the auth code #
+############################################
+
+From CLI, add logger, with level set to DEBUG, for base package in which code resides:
+
+[standalone@localhost:9990 /] /subsystem=logging/logger=com.redhat.consulting.sso:add(level=DEBUG)
+
+Increase CONSOLE logger's log level to DEBUG:
+
+[standalone@localhost:9990 /] /subsystem=logging/console-handler=CONSOLE:write-attribute(name=level, value=DEBUG)
 
 Expected server log output, with debug logging enabled:
 
